@@ -29,6 +29,14 @@
   .pill{display:inline-block;padding:2px 10px;border-radius:99px;font-weight:800;font-size:.85rem}
   .watch{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 14px;font-weight:600}.watch small{flex-basis:100%;font-weight:400;color:#777}.wbtn{display:inline-block;padding:9px 14px;border-radius:10px;background:#111;color:#fff;text-decoration:none;font-weight:600}.wbtn.alt{background:#f07a1a}
   .badge{background:#fff4e6;border:1px solid #f0b37a;border-radius:10px;padding:8px 10px}
+  .chart{display:flex;align-items:flex-end;gap:2px;height:110px;margin-top:10px}
+  .chart .b{flex:1;background:linear-gradient(180deg,#ffb86b,#ff7f50);border-radius:3px 3px 0 0;min-height:2px;position:relative}
+  .chart .b.now{outline:2px solid #3b2a1a}
+  .chart .lbl{position:absolute;bottom:-18px;left:50%;transform:translateX(-50%);font-size:.65rem;color:var(--muted);white-space:nowrap}
+  .chart{padding-bottom:18px}
+  table.runs{width:100%;border-collapse:collapse;margin-top:8px;font-size:.9rem}
+  table.runs th,table.runs td{text-align:left;padding:5px 4px;border-bottom:1px solid #f3e3cf}
+  table.runs th{color:var(--muted);font-weight:600;font-size:.75rem;text-transform:uppercase}
   .livebox{display:flex;gap:12px;align-items:center;padding:14px 16px;border-radius:14px;margin-bottom:14px;font-weight:600}.livebox .lt{font-size:1.25rem}.livebox .dot{width:16px;height:16px;border-radius:50%;flex:none}.livebox.RUN{background:#d6f5e3;color:#1e8449}.livebox.RUN .dot{background:#22c55e;animation:pulse 1s infinite}.livebox.ON{background:#fff4d6;color:#8a5a00}.livebox.ON .dot{background:#f59e0b}.livebox.OFF{background:#eee;color:#666}.livebox.OFF .dot{background:#9ca3af}@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.7)}50%{box-shadow:0 0 0 8px rgba(34,197,94,0)}}
   .SPINNING{background:#d6f5e3;color:#1e8449}.IDLE{background:#fde2c4;color:#a0522d}.UNKNOWN{background:#eee;color:#777}
   #log{background:#2b1d10;color:#ffe8cc;border-radius:12px;padding:12px;font:13px/1.45 ui-monospace,monospace;min-height:60px;white-space:pre-wrap;word-break:break-all;max-height:260px;overflow:auto}
@@ -57,6 +65,25 @@
       <div class="card"><div class="k">Settlements 24h</div><div class="v" id="settle">–</div><small id="blocks24"></small></div>
     </div>
     <small id="updated">Loading…</small>
+  </section>
+
+  <section id="statsec">
+    <h2>Squeektoshi's training log 📊</h2>
+    <div class="grid">
+      <div class="card"><div class="k">Avg run time</div><div class="v" id="s_avgrun">–</div><small id="s_runs"></small></div>
+      <div class="card"><div class="k">Longest run</div><div class="v" id="s_longrun">–</div><small id="s_longwhen"></small></div>
+      <div class="card"><div class="k">Wheel cycles (lifetime)</div><div class="v" id="s_cycles">–</div><small id="s_avgcyc"></small></div>
+      <div class="card"><div class="k">Distance (lifetime)</div><div class="v" id="s_dist">–</div><small id="s_daydist"></small></div>
+      <div class="card"><div class="k">Avg pace while running</div><div class="v" id="s_pace">–</div><small id="s_rpmrun"></small></div>
+      <div class="card"><div class="k">Top speed</div><div class="v" id="s_top">–</div><small id="s_topwhen"></small></div>
+      <div class="card"><div class="k">Last run</div><div class="v" id="s_last">–</div><small id="s_lastlen"></small></div>
+      <div class="card"><div class="k">Active rounds</div><div class="v" id="s_active">–</div><small id="s_activesub"></small></div>
+      <div class="card"><div class="k">Best half hour</div><div class="v" id="s_besthh">–</div><small id="s_besthhwhen"></small></div>
+    </div>
+    <div class="card" style="margin-top:10px"><div class="k">When he runs (typical day, your local time)</div><div id="s_typical" class="chart"></div><small id="s_peak"></small></div>
+    <div class="card" style="margin-top:10px"><div class="k">Daily distance</div><div id="s_days" class="chart"></div></div>
+    <div class="card" style="margin-top:10px"><div class="k">Recent runs</div><table id="s_recent" class="runs"><thead><tr><th>Started</th><th>Duration</th><th>Cycles</th><th>Distance</th><th>Avg speed</th></tr></thead><tbody></tbody></table></div>
+    <small id="s_note">Loading run history…</small>
   </section>
 
   <section>
@@ -129,6 +156,103 @@ async function refresh() {
   $("blocks24").textContent = set?.summary ? `${fmt(set.summary.completedBlockCount)} blocks completed` : "";
   $("updated").textContent = `Updated ${new Date().toLocaleTimeString()}${m ? " · freshness: " + (m.freshness ?? "?") : " · status unknown"}`;
 }
+
+// ---------- training log: /v1/measurement/stats + /v1/measurement/runs ----------
+const RUN_GAP_MS = 60000; // segments closer than 60 s are one run
+const durTxt = (ms) => { const s = Math.round(ms / 1000); if (s < 60) return s + " s"; const m = Math.floor(s / 60); return m < 60 ? `${m} min ${s % 60} s` : `${Math.floor(m / 60)} h ${m % 60} min`; };
+const kmTxt = (mm) => (mm >= 1e6 ? (mm / 1e6).toFixed(2) + " km" : Math.round(mm / 1000) + " m");
+const ago = (t) => { const s = (Date.now() - t) / 1000; return s < 90 ? "just now" : s < 3600 ? Math.round(s / 60) + " min ago" : s < 86400 ? Math.round(s / 3600) + " h ago" : Math.round(s / 86400) + " d ago"; };
+const when = (t) => new Date(t).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let MM_PER_CYCLE = null;
+
+async function apiRetry(path) {
+  for (let i = 0; ; i++) {
+    const r = await fetch(API + path, { headers: { accept: "application/json" } });
+    if ((r.status === 429 || r.status === 503) && i < 4) { await sleep(1000 * Number(r.headers.get("retry-after") || 2)); continue; }
+    if (!r.ok) throw new Error(path + " HTTP " + r.status);
+    return r.json();
+  }
+}
+
+function bars(el, vals, labels, nowIdx) {
+  const max = Math.max(1, ...vals);
+  el.innerHTML = vals.map((v, i) => `<div class="b${i === nowIdx ? " now" : ""}" style="height:${(v / max) * 100}%" title="${labels[i].t}">${labels[i].show ? `<span class="lbl">${labels[i].show}</span>` : ""}</div>`).join("");
+}
+
+async function loadStats() {
+  const st = await apiRetry("/measurement/stats?range=7d");
+  if (st.schemaVersion !== 1) return;
+  const L = st.lifetime || {};
+  const work = Number(L.acceptedWorkUnits), dist = Number(L.observedDistanceMm);
+  if (work > 0 && dist > 0) MM_PER_CYCLE = dist / work;
+  $("s_cycles").textContent = fmt(work);
+  $("s_dist").textContent = dist ? kmTxt(dist) : "–";
+  const sum = st.activity?.summary;
+  if (sum) $("s_daydist").textContent = `avg ${kmTxt(Number(sum.averageDistancePerActiveDayMm))} per active day · ${sum.activeDayCount} active days`;
+  const R = st.records || {};
+  if (R.peakObservedSpeedMmPerSecond) { $("s_top").textContent = (Number(R.peakObservedSpeedMmPerSecond.value) * 0.0036).toFixed(2) + " km/h"; $("s_topwhen").textContent = `${when(R.peakObservedSpeedMmPerSecond.occurredAt)}${R.peakObservedRpmMilli ? " · " + (Number(R.peakObservedRpmMilli.value) / 1000).toFixed(0) + " RPM" : ""}`; }
+  if (R.mostWorkHalfHour) { $("s_besthh").textContent = fmt(R.mostWorkHalfHour.value) + " cycles"; $("s_besthhwhen").textContent = when(R.mostWorkHalfHour.occurredAt); }
+  const rd = st.rounds;
+  if (rd) { $("s_active").textContent = (rd.activeRateBps / 100).toFixed(1) + "%"; $("s_activesub").textContent = `${fmt(rd.activeCount)} of ${fmt(rd.observedCount)} 10-min rounds had running · median ${fmt(rd.medianActiveWork)} cycles`; }
+  // typical day -> local time, 48 half-hour slots
+  const td = st.activity?.typicalDay || [];
+  if (td.length) {
+    const off = -new Date().getTimezoneOffset(); // minutes
+    const slots = new Array(48).fill(0);
+    td.forEach((x) => { const local = ((x.startMinuteUtc + off) % 1440 + 1440) % 1440; slots[Math.floor(local / 30)] = Number(x.meanWorkMilli) / 1000; });
+    const now = new Date(), nowIdx = Math.floor((now.getHours() * 60 + now.getMinutes()) / 30);
+    bars($("s_typical"), slots, slots.map((v, i) => ({ t: `${String(Math.floor(i / 2)).padStart(2, "0")}:${i % 2 ? "30" : "00"} · ${v.toFixed(0)} cycles avg`, show: i % 8 === 0 ? `${String(i / 2).padStart(2, "0")}:00` : "" })), nowIdx);
+    const pk = slots.indexOf(Math.max(...slots));
+    $("s_peak").textContent = `Busiest slot: ${String(Math.floor(pk / 2)).padStart(2, "0")}:${pk % 2 ? "30" : "00"} local · outlined bar = now`;
+  }
+  const days = (st.activity?.days || []).filter((d) => d.distanceMm != null);
+  if (days.length) bars($("s_days"), days.map((d) => Number(d.distanceMm) / 1e6), days.map((d) => ({ t: `${d.date}: ${kmTxt(Number(d.distanceMm))}`, show: d.date.slice(5) })), -1);
+}
+
+// Runs: walk pages (oldest first), cache in localStorage, merge segments into runs
+const CACHE_KEY = "pitcrew-runs-v1";
+async function loadRuns() {
+  let cache = {}; try { cache = JSON.parse(localStorage.getItem(CACHE_KEY) || "{}"); } catch {}
+  let runs = cache.runs || [], cursor = cache.cursor || null, open = cache.open || null;
+  const pushSeg = (sg) => {
+    const s = Date.parse(sg.startAt), e = Date.parse(sg.endAt), w = Number(sg.workUnits);
+    if (!sg.measurementEligible) return;
+    if (open && s - open.e <= RUN_GAP_MS && !sg.discontinuity) { open.e = e; open.w += w; }
+    else { if (open) runs.push(open); open = { s, e, w }; }
+  };
+  for (let page = 0; page < 60; page++) {
+    const q = new URLSearchParams({ limit: "100", ...(cursor ? { cursor } : {}) });
+    const d = await apiRetry("/measurement/runs?" + q);
+    (d.items || []).forEach(pushSeg);
+    if (d.nextCursor) cursor = d.nextCursor;
+    $("s_note").textContent = `Loading run history… ${runs.length} runs so far`;
+    if (!d.items?.length || !d.nextCursor) break;
+    await sleep(600); // stay under 2 req/s
+  }
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ runs: runs.slice(-3000), cursor, open })); } catch {}
+  const all = open ? [...runs, open] : runs.slice();
+  const real = all.filter((r) => r.e - r.s >= 10000); // ignore twitches under 10 s
+  if (!real.length) { $("s_note").textContent = "No runs recorded yet."; return; }
+  const durs = real.map((r) => r.e - r.s), totalMs = durs.reduce((a, b) => a + b, 0), totalW = real.reduce((a, r) => a + r.w, 0);
+  $("s_avgrun").textContent = durTxt(totalMs / real.length);
+  $("s_runs").textContent = `${real.length} runs since ${new Date(real[0].s).toLocaleDateString()}`;
+  const li = durs.indexOf(Math.max(...durs));
+  $("s_longrun").textContent = durTxt(durs[li]); $("s_longwhen").textContent = `${when(real[li].s)} · ${fmt(real[li].w)} cycles`;
+  $("s_avgcyc").textContent = `${fmt(Math.round(totalW / real.length))} cycles per run on average`;
+  const rpm = totalW / (totalMs / 60000);
+  $("s_rpmrun").textContent = `${rpm.toFixed(0)} RPM average while running`;
+  if (MM_PER_CYCLE) $("s_pace").textContent = ((totalW * MM_PER_CYCLE) / (totalMs / 1000) * 0.0036).toFixed(2) + " km/h";
+  else $("s_pace").textContent = rpm.toFixed(0) + " RPM";
+  const last = real[real.length - 1];
+  $("s_last").textContent = ago(last.e); $("s_lastlen").textContent = `${durTxt(last.e - last.s)} · ${fmt(last.w)} cycles`;
+  const tb = $("s_recent").querySelector("tbody");
+  tb.innerHTML = real.slice(-8).reverse().map((r) => { const ms = r.e - r.s, mm = MM_PER_CYCLE ? r.w * MM_PER_CYCLE : null;
+    return `<tr><td>${when(r.s)}</td><td>${durTxt(ms)}</td><td>${fmt(r.w)}</td><td>${mm ? kmTxt(mm) : "–"}</td><td>${mm ? (mm / (ms / 1000) * 0.0036).toFixed(2) + " km/h" : "–"}</td></tr>`; }).join("");
+  $("s_note").textContent = `A run is continuous wheel activity with no pause over 60 s, at least 10 s long. One cycle = one wheel turn (sensor passage)${MM_PER_CYCLE ? `, about ${(MM_PER_CYCLE / 10).toFixed(1)} cm` : ""}. Updated ${new Date().toLocaleTimeString()}.`;
+}
+async function loadTraining() { try { await loadStats(); } catch (x) { log("Stats: " + x.message); } try { await loadRuns(); } catch (x) { $("s_note").textContent = "Run history unavailable right now (" + x.message + ")."; } }
+loadTraining(); setInterval(loadTraining, 120000);
 refresh().catch((x) => log("Status error: " + x.message));
 setInterval(() => refresh().catch(() => {}), 15000);
 
@@ -136,7 +260,7 @@ if (!(await loadViem())) { log("Could not load viem from CDN; wallet actions una
 
 // ---------- config: addresses from docs deployments (runtime, bundled fallback); ABIs bundled from docs ----------
 let deployments;
-try { deployments = await getJSON(DEPLOY_URL); } catch { deployments = await getJSON("./deployments.sepolia.json"); log("Using bundled deployments.sepolia.json (docs fetch failed)."); }
+deployments = await getJSON("./deployments.sepolia.json?v=2"); // live tracked installation addresses (docs file lists an older token)
 const [tokenAbi, miningAbi] = await Promise.all([getJSON("./abi/SqueekToken.json"), getJSON("./abi/SqueekMining.json")]);
 const TOKEN = deployments.contracts.SqueekToken.address;
 const MINING = deployments.contracts.SqueekMining.address;
