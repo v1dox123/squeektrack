@@ -19,7 +19,7 @@
       "abi": "/assets/abi/SqueekCore.json"
     },
     "SqueekMining": {
-      "address": "0x3beE588fC20dE788Bac17d33b41Da7346cb27EC4",
+      "address": "0xcd46990f8349057335289ef282c276204b6cdc62",
       "kind": "transparent proxy",
       "implementation": "0x08890b360c65fd878344bf6e23d1c36358433b4e",
       "implementationRuntimeHash": "0x6097cf8e8f96ea654878ab0a35410240ab1b05668c08ce1b3f99e04116e88bc1",
@@ -30,7 +30,7 @@
       "abi": "/assets/abi/SqueekMining.json"
     },
     "SqueekToken": {
-      "address": "0x6872bfa5ccc3e9e440c6c16e5ffdabb8dba4cc76",
+      "address": "0x5501e1fa81be1c3f49225fa7668da0245d07db60",
       "kind": "immutable",
       "abi": "/assets/abi/SqueekToken.json"
     },
@@ -155,5 +155,6 @@
         "cooldownBlocks": 0
       }
     ]
-  }
+  },
+  "note": "SqueekToken and SqueekMining point at the live installation (stream-game-sepolia-test-20261025-01) that Squeekchain tracks."
 }
