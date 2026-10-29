@@ -125,20 +125,26 @@ const fmt = (n) => (n == null || n === "" ? "–" : Number(n).toLocaleString());
 
 // ---------- live status ----------
 const avail = (o) => o && o.status !== "unavailable";
+let lastWork = null, lastMoveAt = 0;
 async function refresh() {
   const [s, e, st] = await Promise.allSettled([getJSON(`${API}/status`), getJSON(`${API}/economy/state`), getJSON(`${API}/settlements?range=24h`)]);
   const status = s.status === "fulfilled" && avail(s.value) ? s.value : null;
   const m = status && avail(status.measurement) ? status.measurement : null;
-  const core = m?.coreStatus === "SPINNING" || m?.coreStatus === "IDLE" ? m.coreStatus : "UNKNOWN";
-  $("status").textContent = core; $("status").className = "pill " + core;
-  $("wheel").classList.toggle("spin", core === "SPINNING");
-  // Live = sensor reporting fresh data (freshness online and observedAt within staleAfterSeconds)
+  // Running = fresh reading AND (device says ACTIVE, or wheel speed > 0, or work counter moved in the last 30 s).
+  // Note: coreStatus can lag and read IDLE while the wheel turns, so speed/work are the real signal.
   const seenMs = m?.observedAt ? Date.parse(m.observedAt) : NaN;
   const ageS = isNaN(seenMs) ? null : Math.max(0, Math.round((Date.now() - seenMs) / 1000));
   const fresh = !!m && m.freshness === "online" && (ageS == null || ageS <= (Number(m.staleAfterSeconds) || 120));
+  const workNow = m ? Number(m.cumulativeWorkUnits) : NaN;
+  if (!isNaN(workNow)) { if (lastWork != null && workNow > lastWork) lastMoveAt = Date.now(); lastWork = workNow; }
+  const moving = !!m && (m.coreStatus === "ACTIVE" || Number(m.rpmMilli) > 0 || Number(m.speedMmPerSecond) > 0 || Date.now() - lastMoveAt < 30000);
+  const core = !m ? "UNKNOWN" : m.coreStatus === "COUNTER_FAULT" ? "FAULT" : !fresh ? "OFFLINE" : moving ? "RUNNING" : "RESTING";
+  $("status").textContent = core; $("status").className = "pill " + (core === "RUNNING" ? "SPINNING" : core === "RESTING" ? "IDLE" : "UNKNOWN");
+  $("wheel").classList.toggle("spin", core === "RUNNING");
   const box = $("livebox");
-  if (fresh && core === "SPINNING") { box.className = "livebox RUN"; $("livetitle").textContent = "🟢 LIVE: Squeektoshi is running right now!"; }
-  else if (fresh) { box.className = "livebox ON"; $("livetitle").textContent = "🟡 LIVE: wheel online, hamster resting"; }
+  if (core === "RUNNING") { box.className = "livebox RUN"; $("livetitle").textContent = "🟢 LIVE: Squeektoshi is running right now!"; }
+  else if (core === "RESTING") { box.className = "livebox ON"; $("livetitle").textContent = "🟡 LIVE: wheel online, hamster resting"; }
+  else if (core === "FAULT") { box.className = "livebox OFF"; $("livetitle").textContent = "⚠️ Wheel sensor reports a counter fault"; }
   else { box.className = "livebox OFF"; $("livetitle").textContent = "⚫ OFFLINE: no fresh wheel data"; }
   $("livesub").textContent = ageS == null ? "" : `Last wheel reading ${ageS}s ago${m?.distanceMm != null ? " · distance this session " + (m.distanceMm/1000).toFixed(1) + " m" : ""}`;
   $("rpm").textContent = m && m.rpmMilli != null ? (m.rpmMilli / 1000).toFixed(1) : "–";
@@ -254,7 +260,7 @@ async function loadRuns() {
 async function loadTraining() { try { await loadStats(); } catch (x) { log("Stats: " + x.message); } try { await loadRuns(); } catch (x) { $("s_note").textContent = "Run history unavailable right now (" + x.message + ")."; } }
 loadTraining(); setInterval(loadTraining, 120000);
 refresh().catch((x) => log("Status error: " + x.message));
-setInterval(() => refresh().catch(() => {}), 15000);
+setInterval(() => refresh().catch(() => {}), 5000);
 
 if (!(await loadViem())) { log("Could not load viem from CDN; wallet actions unavailable."); throw new Error("viem unavailable"); }
 
