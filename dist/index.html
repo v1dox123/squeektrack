@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Squeek Pit Crew 🐹</title>
+<style>
+  :root{--bg:#fff7ec;--card:#fff;--ink:#3b2a1a;--muted:#8a7360;--accent:#ff9f43;--ok:#2ecc71;--bad:#e74c3c}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:ui-rounded,"Nunito","Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+  main{max-width:760px;margin:0 auto;padding:20px 16px 60px}
+  h1{margin:0;font-size:1.9rem}
+  .sub{color:var(--muted);margin:4px 0 18px}
+  header{display:flex;align-items:center;gap:14px}
+  .wheel{font-size:3rem;display:inline-block}
+  .wheel.spin{animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .card{background:var(--card);border-radius:16px;padding:14px;box-shadow:0 2px 0 #f0dcc4}
+  .card .k{font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .card .v{font-size:1.4rem;font-weight:800;margin-top:4px;word-break:break-word}
+  .bar{height:14px;background:#f3e3cf;border-radius:99px;overflow:hidden;margin-top:8px}
+  .bar>div{height:100%;background:linear-gradient(90deg,#ffb86b,#ff7f50);width:0;transition:width .6s}
+  section{margin-top:22px}
+  h2{font-size:1.2rem;margin:0 0 10px}
+  button{font:inherit;font-weight:800;border:0;border-radius:14px;padding:12px 16px;background:var(--accent);color:#fff;cursor:pointer;margin:4px 6px 4px 0}
+  button:disabled{background:#d9c7b2;cursor:not-allowed}
+  button.ghost{background:#fff;color:var(--ink);border:2px solid var(--accent)}
+  .pill{display:inline-block;padding:2px 10px;border-radius:99px;font-weight:800;font-size:.85rem}
+  .SPINNING{background:#d6f5e3;color:#1e8449}.IDLE{background:#fde2c4;color:#a0522d}.UNKNOWN{background:#eee;color:#777}
+  #log{background:#2b1d10;color:#ffe8cc;border-radius:12px;padding:12px;font:13px/1.45 ui-monospace,monospace;min-height:60px;white-space:pre-wrap;word-break:break-all;max-height:260px;overflow:auto}
+  a{color:#c0601a}
+  small{color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+  <header><span id="wheel" class="wheel">🎡</span><div><h1>Squeek Pit Crew 🐹</h1><div class="sub">Hamster-cam companion for Squeekchain (Sepolia testnet)</div></div></header>
+
+  <section>
+    <h2>Live hamster <span id="status" class="pill UNKNOWN">…</span></h2>
+    <div class="grid">
+      <div class="card"><div class="k">Wheel RPM</div><div class="v" id="rpm">–</div></div>
+      <div class="card"><div class="k">Speed</div><div class="v" id="speed">–</div></div>
+      <div class="card"><div class="k">Total work</div><div class="v" id="work">–</div></div>
+      <div class="card"><div class="k">Block height</div><div class="v" id="height">–</div>
+        <div class="bar"><div id="prog"></div></div><small id="progtxt"></small></div>
+      <div class="card"><div class="k">Round (economy)</div><div class="v" id="round">–</div></div>
+      <div class="card"><div class="k">Settlements 24h</div><div class="v" id="settle">–</div><small id="blocks24"></small></div>
+    </div>
+    <small id="updated">Loading…</small>
+  </section>
+
+  <section>
+    <h2>Pit Crew 🔧</h2>
+    <div class="card">
+      <button id="connect">Connect wallet</button>
+      <button id="ping" disabled>🏁 Pit stop ping</button>
+      <button id="cp" class="ghost" disabled>⏱ Run checkpoint</button>
+      <div><small id="acct">Not connected. Your own wallet signs everything; this page never sees keys.</small></div>
+      <div><small id="cpstat">Checkpoint status: –</small></div>
+      <p><small><b>Pit stop ping</b> sends SqueekToken <code>approve(SqueekMining, 0)</code>: a harmless, zero-allowance transaction (gas only, Sepolia ETH) so anyone can make a first Squeekchain transaction.</small></p>
+    </div>
+    <h2 style="margin-top:14px">Log</h2>
+    <div id="log"></div>
+  </section>
+  <p><small>Addresses: <a href="https://docs.squeekchain.com/assets/deployments/sepolia.json" target="_blank">docs deployments</a> · API: api.squeekchain.com · MIT</small></p>
+</main>
+
+<script type="module">
+// viem is loaded lazily from a CDN (esm.sh, then jsDelivr) so the live status works even if the CDN is blocked.
+const VIEM_CDNS = [["https://esm.sh/viem@2.21.54", "https://esm.sh/viem@2.21.54/chains"], ["https://cdn.jsdelivr.net/npm/viem@2.21.54/+esm", "https://cdn.jsdelivr.net/npm/viem@2.21.54/chains/+esm"]];
+let createPublicClient, createWalletClient, custom, http, fallback, BaseError, ContractFunctionRevertedError, UserRejectedRequestError, sepolia;
+async function loadViem() {
+  for (const [lib, chains] of VIEM_CDNS) {
+    try { const v = await import(lib); const c = await import(chains); ({ createPublicClient, createWalletClient, custom, http, fallback, BaseError, ContractFunctionRevertedError, UserRejectedRequestError } = v); sepolia = c.sepolia; return true; }
+    catch (x) { console.warn("viem load failed from", lib, x.message); }
+  }
+  return false;
+}
+
+const API = "https://api.squeekchain.com/v1";
+const DEPLOY_URL = "https://docs.squeekchain.com/assets/deployments/sepolia.json";
+const EXPLORER = "https://eth-sepolia.blockscout.com";
+const $ = (id) => document.getElementById(id);
+const log = (m) => { $("log").textContent = `[${new Date().toLocaleTimeString()}] ${m}\n` + $("log").textContent; };
+async function getJSON(url) { const r = await fetch(url); if (!r.ok) throw new Error(url + " " + r.status); return r.json(); }
+const fmt = (n) => (n == null || n === "" ? "–" : Number(n).toLocaleString());
+
+// ---------- live status ----------
+const avail = (o) => o && o.status !== "unavailable";
+async function refresh() {
+  const [s, e, st] = await Promise.allSettled([getJSON(`${API}/status`), getJSON(`${API}/economy/state`), getJSON(`${API}/settlements?range=24h`)]);
+  const status = s.status === "fulfilled" && avail(s.value) ? s.value : null;
+  const m = status && avail(status.measurement) ? status.measurement : null;
+  const core = m?.coreStatus === "SPINNING" || m?.coreStatus === "IDLE" ? m.coreStatus : "UNKNOWN";
+  $("status").textContent = core; $("status").className = "pill " + core;
+  $("wheel").classList.toggle("spin", core === "SPINNING");
+  $("rpm").textContent = m && m.rpmMilli != null ? (m.rpmMilli / 1000).toFixed(1) : "–";
+  $("speed").textContent = m && m.speedMmPerSecond != null ? `${(m.speedMmPerSecond / 1000).toFixed(2)} m/s` : "–";
+  $("work").textContent = m ? fmt(m.cumulativeWorkUnits) : "–";
+  const a = status && avail(status.builder) ? status.builder.anchor : null;
+  $("height").textContent = a ? fmt(a.blockHeight) : "–";
+  const p = a ? Number(a.blockProgress) / 1e9 : 0;
+  $("prog").style.width = (p * 100).toFixed(1) + "%";
+  $("progtxt").textContent = a ? `${(p * 100).toFixed(1)}% to next block` : "unknown";
+  const econ = e.status === "fulfilled" && avail(e.value) ? e.value : null;
+  $("round").textContent = econ?.lifecycle ? `${fmt(econ.lifecycle.currentRound)}${econ.lifecycle.paused ? " ⏸" : ""}` : "–";
+  const set = st.status === "fulfilled" && avail(st.value) ? st.value : null;
+  $("settle").textContent = set?.summary ? fmt(set.summary.settlementCount) : "–";
+  $("blocks24").textContent = set?.summary ? `${fmt(set.summary.completedBlockCount)} blocks completed` : "";
+  $("updated").textContent = `Updated ${new Date().toLocaleTimeString()}${m ? " · freshness: " + (m.freshness ?? "?") : " · status unknown"}`;
+}
+refresh().catch((x) => log("Status error: " + x.message));
+setInterval(() => refresh().catch(() => {}), 15000);
+
+if (!(await loadViem())) { log("Could not load viem from CDN; wallet actions unavailable."); throw new Error("viem unavailable"); }
+
+// ---------- config: addresses from docs deployments (runtime, bundled fallback); ABIs bundled from docs ----------
+let deployments;
+try { deployments = await getJSON(DEPLOY_URL); } catch { deployments = await getJSON("./deployments.sepolia.json"); log("Using bundled deployments.sepolia.json (docs fetch failed)."); }
+const [tokenAbi, miningAbi] = await Promise.all([getJSON("./abi/SqueekToken.json"), getJSON("./abi/SqueekMining.json")]);
+const TOKEN = deployments.contracts.SqueekToken.address;
+const MINING = deployments.contracts.SqueekMining.address;
+
+const pub = createPublicClient({ chain: sepolia, transport: fallback([http("https://ethereum-sepolia-rpc.publicnode.com"), http()]) });
+
+// ---------- checkpoint status ----------
+let cpReady = false, account = null, wallet = null;
+async function readCheckpoint() {
+  try {
+    const [corePaused, nextRound, roundSettled] = await pub.readContract({ address: MINING, abi: miningAbi, functionName: "checkpointStatus" });
+    cpReady = !corePaused && roundSettled;
+    $("cpstat").textContent = `Checkpoint status: next round ${nextRound} · ${corePaused ? "core paused" : roundSettled ? "settled round ready ✅" : "waiting for next settlement"}`;
+  } catch (x) { cpReady = false; $("cpstat").textContent = "Checkpoint status: unknown (" + (x.shortMessage || x.message) + ")"; }
+  $("cp").disabled = !(account && cpReady);
+}
+readCheckpoint(); setInterval(readCheckpoint, 30000);
+
+// ---------- wallet ----------
+async function ensureSepolia() {
+  try { await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0xaa36a7" }] }); }
+  catch (x) {
+    if (x.code === 4902) await window.ethereum.request({ method: "wallet_addEthereumChain", params: [{ chainId: "0xaa36a7", chainName: "Sepolia", nativeCurrency: { name: "Sepolia ETH", symbol: "ETH", decimals: 18 }, rpcUrls: ["https://ethereum-sepolia-rpc.publicnode.com"], blockExplorerUrls: [EXPLORER] }] });
+    else throw x;
+  }
+  const id = await window.ethereum.request({ method: "eth_chainId" });
+  if (parseInt(id, 16) !== 11155111) throw new Error("Wallet is not on Sepolia (11155111)");
+}
+$("connect").onclick = async () => {
+  if (!window.ethereum) return log("No injected wallet found. Install MetaMask, Rabby or similar.");
+  try {
+    [account] = await window.ethereum.request({ method: "eth_requestAccounts" });
+    await ensureSepolia();
+    wallet = createWalletClient({ account, chain: sepolia, transport: custom(window.ethereum) });
+    $("acct").textContent = "Connected: " + account + " on Sepolia";
+    $("ping").disabled = false; $("connect").textContent = "Connected ✓";
+    readCheckpoint();
+  } catch (x) { log("Connect failed: " + (x.shortMessage || x.message)); }
+};
+window.ethereum?.on?.("accountsChanged", (a) => { account = a[0] || null; if (account) wallet = createWalletClient({ account, chain: sepolia, transport: custom(window.ethereum) }); $("acct").textContent = account ? "Connected: " + account : "Not connected"; $("ping").disabled = !account; readCheckpoint(); });
+
+function explain(x) {
+  if (x instanceof BaseError) {
+    if (x.walk((e) => e instanceof UserRejectedRequestError)) return "You rejected the request in your wallet.";
+    const rev = x.walk((e) => e instanceof ContractFunctionRevertedError);
+    if (rev) return `Reverted: ${rev.data?.errorName ?? rev.reason ?? "unknown error"}${rev.data?.args?.length ? "(" + rev.data.args.join(", ") + ")" : ""}`;
+    return x.shortMessage;
+  }
+  return x.message;
+}
+
+async function simulateAndSend(label, params, btn) {
+  btn.disabled = true;
+  try {
+    await ensureSepolia();
+    log(`${label}: simulating from ${account}…`);
+    const { request } = await pub.simulateContract({ ...params, account });
+    log(`${label}: simulation OK, confirm in your wallet…`);
+    const hash = await wallet.writeContract(request);
+    log(`${label}: sent ${EXPLORER}/tx/${hash}`);
+    const rc = await pub.waitForTransactionReceipt({ hash });
+    log(`${label}: ${rc.status === "success" ? "confirmed 🎉" : "FAILED"} in block ${rc.blockNumber}`);
+  } catch (x) { log(`${label}: stopped. ${explain(x)}`); }
+  finally { btn.disabled = false; readCheckpoint(); }
+}
+
+$("ping").onclick = () => simulateAndSend("Pit stop ping", { address: TOKEN, abi: tokenAbi, functionName: "approve", args: [MINING, 0n] }, $("ping"));
+$("cp").onclick = async () => {
+  await readCheckpoint();
+  if (!cpReady) return log("Checkpoint: no settled round ready right now.");
+  simulateAndSend("Checkpoint", { address: MINING, abi: miningAbi, functionName: "checkpoint" }, $("cp"));
+};
+log(`Ready. SqueekToken ${TOKEN} · SqueekMining ${MINING}`);
+</script>
+</body>
+</html>
